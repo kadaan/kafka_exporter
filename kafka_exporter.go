@@ -126,7 +126,7 @@ type kafkaOpts struct {
 	tlsInsecureSkipTLSVerify bool
 	kafkaVersion             string
 	useZooKeeperLag          bool
-	uriZookeeper 			[]string
+	uriZookeeper 	         []string
 }
 
 // CanReadCertAndKey returns true if the certificate and key files already exists,
