@@ -101,7 +101,6 @@ var (
 	)
 )
 
-
 // Exporter collects Kafka stats from the given server and exports them using
 // the prometheus metrics package.
 type Exporter struct {
@@ -126,7 +125,7 @@ type kafkaOpts struct {
 	tlsInsecureSkipTLSVerify bool
 	kafkaVersion             string
 	useZooKeeperLag          bool
-	uriZookeeper 			[]string
+	uriZookeeper             []string
 }
 
 // CanReadCertAndKey returns true if the certificate and key files already exists,
@@ -375,7 +374,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 							consumerGroupLag := currentOffset - offset
 							ch <- prometheus.MustNewConstMetric(
-								consumergroupLagZookeeper, prometheus.GaugeValue, float64(consumerGroupLag),group.Name, topic, strconv.FormatInt(int64(partition), 10),
+								consumergroupLagZookeeper, prometheus.GaugeValue, float64(consumerGroupLag), group.Name, topic, strconv.FormatInt(int64(partition), 10),
 							)
 						}
 					}
@@ -510,7 +509,6 @@ func main() {
 	kingpin.Flag("kafka.version", "Kafka broker version").Default(sarama.V1_0_0_0.String()).StringVar(&opts.kafkaVersion)
 	kingpin.Flag("use.consumelag.zookeeper", "if you need to use a group from zookeeper").Default("false").BoolVar(&opts.useZooKeeperLag)
 	kingpin.Flag("zookeeper server", "Address (hosts) of zookeeper server.").Default("localhost:2181").StringsVar(&opts.uriZookeeper)
-
 
 	plog.AddFlags(kingpin.CommandLine)
 	kingpin.Version(version.Print("kafka_exporter"))
