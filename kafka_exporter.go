@@ -265,10 +265,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	offset := make(map[string]map[int32]int64)
 
-	if e.useZooKeeperLag {
-
-	}
-
 	if err := e.client.RefreshMetadata(); err != nil {
 		plog.Errorf("Cannot refresh topics, using cached data: %v", err)
 	}
