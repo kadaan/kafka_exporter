@@ -92,12 +92,6 @@ var (
 		"Current Approximate Lag of a ConsumerGroup at Topic/Partition",
 		[]string{"consumergroup", "topic", "partition"}, nil,
 	)
-
-	consumergroupLagZookeeper = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "consumergroupzookeeper", "lag_zookeeper"),
-		"Current Approximate Lag(zookeeper) of a ConsumerGroup at Topic/Partition",
-		[]string{"consumergroup", "topic", "partition"}, nil,
-	)
 )
 
 // Exporter collects Kafka stats from the given server and exports them using
@@ -251,7 +245,6 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- topicUnderReplicatedPartition
 	ch <- consumergroupCurrentOffset
 	ch <- consumergroupLag
-	ch <- consumergroupLagZookeeper
 }
 
 // Collect fetches the stats from configured Kafka location and delivers them
@@ -355,25 +348,6 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 						topicUnderReplicatedPartition, prometheus.GaugeValue, float64(0), topic, strconv.FormatInt(int64(partition), 10),
 					)
 				}
-
-				if e.useZooKeeperLag {
-					ConsumerGroups, err := e.zookeeperClient.Consumergroups()
-
-					if err != nil {
-						plog.Errorf("Cannot get consumer group %v", err)
-					}
-
-					for _, group := range ConsumerGroups {
-						offset, _ := group.FetchOffset(topic, partition)
-						if offset > 0 {
-
-							consumerGroupLag := currentOffset - offset
-							ch <- prometheus.MustNewConstMetric(
-								consumergroupLagZookeeper, prometheus.GaugeValue, float64(consumerGroupLag), group.Name, topic, strconv.FormatInt(int64(partition), 10),
-							)
-						}
-					}
-				}
 			}
 		}
 	}
@@ -434,7 +408,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 						for partition, offsetFetchResponseBlock := range partitions {
 							err := offsetFetchResponseBlock.Err
 							if err != sarama.ErrNoError {
-								plog.Errorln("Error for  partition %d :%v", partition, err.Error())
+								plog.Errorf("Error for partition %d :%v", partition, err.Error())
 								continue
 							}
 
@@ -455,13 +429,84 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 									consumergroupLag, prometheus.GaugeValue, float64(lag), group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 								)
 							} else {
-								plog.Errorln("No offset of topic %s partition %d, cannot get consumer group lag", topic, partition)
+								plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag", topic, partition)
 							}
 							e.mu.Unlock()
 						}
+					} else {
+						plog.Debugf("Topic %s is not being consumed, cannot get consumer group metrics", topic)
 					}
 				}
 			}
+		}
+	}
+
+	if e.useZooKeeperLag {
+		getConsumerGroupZookeeperMetrics := func(consumerGroup *kazoo.Consumergroup) {
+			defer wg.Done()
+
+			plog.Debugf("Getting consumer offsets for group %s", consumerGroup.Name)
+
+			offsets, err := consumerGroup.FetchAllOffsets()
+			if err != nil {
+				plog.Errorf("Cannot get offset from zookeeper for group %s: %v", consumerGroup.Name, err)
+			}
+
+			for topic, partitions := range offsets {
+				// If the topic is not consumed by that consumer group, skip it
+				topicConsumed := false
+				for _, currentOffset := range partitions {
+					// Kafka will return -1 if there is no offset associated with a topic-partition under that consumer group
+					if currentOffset != -1 {
+						topicConsumed = true
+						break
+					}
+				}
+
+				if topicConsumed {
+					for partition, currentOffset := range partitions {
+						plog.Debugf("Topic %s partition %d is being consumed by %s", topic, partition, consumerGroup.Name)
+
+						ch <- prometheus.MustNewConstMetric(
+							consumergroupCurrentOffset, prometheus.GaugeValue, float64(currentOffset), consumerGroup.Name, topic, strconv.FormatInt(int64(partition), 10),
+						)
+
+						e.mu.Lock()
+						if offset, ok := offset[topic][partition]; ok {
+							// If the topic is consumed by that consumer group, but no offset associated with the partition
+							// forcing lag to -1 to be able to alert on that
+							var lag int64
+							if currentOffset == -1 {
+								lag = -1
+							} else {
+								lag = offset - currentOffset
+							}
+							ch <- prometheus.MustNewConstMetric(
+								consumergroupLag, prometheus.GaugeValue, float64(lag), consumerGroup.Name, topic, strconv.FormatInt(int64(partition), 10),
+							)
+						} else {
+							plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag", topic, partition)
+						}
+						e.mu.Unlock()
+					}
+				} else {
+					plog.Debugf("Topic %s is not being consumed, cannot get consumer group zookeeper metrics", topic)
+				}
+			}
+		}
+
+		consumerGroups, err := e.zookeeperClient.Consumergroups()
+		if err != nil {
+			plog.Errorf("Cannot get consumer groups %v", err)
+		}
+		if consumerGroups.Len() > 0 {
+			for _, consumerGroup := range consumerGroups {
+				wg.Add(1)
+				go getConsumerGroupZookeeperMetrics(consumerGroup)
+			}
+			wg.Wait()
+		} else {
+			plog.Errorln("No zookeeper based consumer groups, cannot get consumer group metrics")
 		}
 	}
 
