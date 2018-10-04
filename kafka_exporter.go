@@ -118,7 +118,7 @@ type kafkaOpts struct {
 	tlsInsecureSkipTLSVerify bool
 	kafkaVersion             string
 	useZooKeeperLag          bool
-	uriZookeeper             []string
+	uriZookeeper             string
 }
 
 // CanReadCertAndKey returns true if the certificate and key files already exists,
@@ -210,7 +210,7 @@ func NewExporter(opts kafkaOpts, topicFilter string, groupFilter string) (*Expor
 	}
 
 	if opts.useZooKeeperLag {
-		zookeeperClient, err = kazoo.NewKazoo(opts.uriZookeeper, nil)
+		zookeeperClient, err = kazoo.NewKazooFromConnectionString(opts.uriZookeeper, nil)
 	}
 
 	client, err := sarama.NewClient(opts.uri, config)
@@ -429,12 +429,12 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 									consumergroupLag, prometheus.GaugeValue, float64(lag), group.GroupId, topic, strconv.FormatInt(int64(partition), 10),
 								)
 							} else {
-								plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag", topic, partition)
+								plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag for %s", topic, partition, group.GroupId)
 							}
 							e.mu.Unlock()
 						}
 					} else {
-						plog.Debugf("Topic %s is not being consumed, cannot get consumer group metrics", topic)
+						plog.Debugf("Topic %s is not being consumed by %s, cannot get consumer group metrics", topic, group.GroupId)
 					}
 				}
 			}
@@ -485,12 +485,12 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 								consumergroupLag, prometheus.GaugeValue, float64(lag), consumerGroup.Name, topic, strconv.FormatInt(int64(partition), 10),
 							)
 						} else {
-							plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag", topic, partition)
+							plog.Errorf("No offset of topic %s partition %d, cannot get consumer group lag for %s", topic, partition, consumerGroup.Name)
 						}
 						e.mu.Unlock()
 					}
 				} else {
-					plog.Debugf("Topic %s is not being consumed, cannot get consumer group zookeeper metrics", topic)
+					plog.Debugf("Topic %s is not being consumed by %s, cannot get consumer group zookeeper metrics", topic, consumerGroup.Name)
 				}
 			}
 		}
@@ -548,7 +548,7 @@ func main() {
 	kingpin.Flag("tls.insecure-skip-tls-verify", "If true, the server's certificate will not be checked for validity. This will make your HTTPS connections insecure.").Default("false").BoolVar(&opts.tlsInsecureSkipTLSVerify)
 	kingpin.Flag("kafka.version", "Kafka broker version").Default(sarama.V1_0_0_0.String()).StringVar(&opts.kafkaVersion)
 	kingpin.Flag("use.consumelag.zookeeper", "if you need to use a group from zookeeper").Default("false").BoolVar(&opts.useZooKeeperLag)
-	kingpin.Flag("zookeeper.server", "Address (hosts) of zookeeper server.").Default("localhost:2181").StringsVar(&opts.uriZookeeper)
+	kingpin.Flag("zookeeper.server", "Address (hosts) of zookeeper server.").Default("localhost:2181").StringVar(&opts.uriZookeeper)
 
 	plog.AddFlags(kingpin.CommandLine)
 	kingpin.Version(version.Print("kafka_exporter"))
